@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>카카오맵 장소 검색 서비스</title>
+    <title>편의점 택배 가능 지점 지도</title>
     <style>
         /* 기본 스타일 초기화 */
         * {
@@ -27,7 +27,7 @@
 
         /* 왼쪽: 검색창 및 결과 리스트 영역 */
         .sidebar {
-            width: 350px; /* 사이드바 너비 고정 */
+            width: 350px;
             height: 100%;
             background-color: #f8f9fa;
             border-right: 1px solid #ddd;
@@ -36,45 +36,48 @@
             z-index: 10;
         }
 
-        /* 검색창 영역 */
-        .search-box {
-            padding: 20px;
+        /* 상단 타이틀 영역 */
+        .title-box {
+            padding: 20px 20px 10px 20px;
             background-color: #fff;
-            border-bottom: 1px solid #eee;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
         }
 
-        .search-box h2 {
+        .title-box h2 {
             font-size: 1.2rem;
-            margin-bottom: 10px;
             color: #333;
         }
 
-        .search-form {
+        /* 탭 메뉴 스타일 */
+        .tab-menu {
             display: flex;
-            gap: 5px;
+            background-color: #fff;
+            border-bottom: 1px solid #eee;
+            padding: 0 10px;
         }
 
-        .search-input {
+        .tab-button {
             flex: 1;
-            padding: 8px 12px;
-            border: 1px solid #ccc;
-            border-radius: 4px;
-            font-size: 14px;
-        }
-
-        .search-button {
-            padding: 8px 15px;
-            background-color: #fee500; /* 카카오 시그니처 노란색 */
+            padding: 12px 0;
             border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            font-weight: bold;
+            background: none;
             font-size: 14px;
+            font-weight: bold;
+            color: #666;
+            cursor: pointer;
+            text-align: center;
+            border-bottom: 3px solid transparent;
+            transition: all 0.2s ease;
         }
 
-        .search-button:hover {
-            background-color: #fada0a;
+        /* 활성화된 탭 스타일 (브랜드별 포인트 색상 적용) */
+        .tab-button.active.gs25 {
+            color: #00bcd4; /* GS25 시그니처 하늘색 계열 */
+            border-bottom-color: #00bcd4;
+        }
+
+        .tab-button.active.cu {
+            color: #742582; /* CU 시그니처 보라색 계열 */
+            border-bottom-color: #742582;
         }
 
         /* 검색 결과 리스트 영역 (스크롤 가능) */
@@ -101,7 +104,7 @@
 
         /* 오른쪽: 지도 영역 */
         .map-container {
-            flex: 1; /* 남은 화면 전체 차지 */
+            flex: 1;
             height: 100%;
         }
     </style>
@@ -110,13 +113,15 @@
 
     <div class="container">
         <div class="sidebar">
-            <div class="search-box">
-                <h2>어디를 찾으시나요?</h2>
-                <form class="search-form" onsubmit="searchPlaces(); return false;">
-                    <input type="text" id="keyword" class="search-input" placeholder="장소를 입력하세요 (예: 강남역)" value="이태원 맛집">
-                    <button type="submit" class="search-button">검색</button>
-                </form>
+            <div class="title-box">
+                <h2>택배 가능 편의점 찾기</h2>
             </div>
+            
+            <div class="tab-menu">
+                <button id="tabGS25" class="tab-button active gs25" onclick="switchBrand('GS25')">GS25 택배</button>
+                <button id="tabCU" class="tab-button cu" onclick="switchBrand('CU')">CU 택배</button>
+            </div>
+
             <div id="placesList" class="result-list"></div>
         </div>
 
@@ -129,163 +134,212 @@
         // 전역 변수 설정
         let map; // 지도 객체
         let placeSearch; // 장소 검색 서비스 객체
-        let markers = []; // 생성된 마커들을 관리할 배열
+        let markers = []; // 편의점 마커들을 관리할 배열
+        let currentPositionMarker = null; // 내 현재 위치 마커 객체
         let infoWindow; // 장소명을 보여줄 인포윈도우 객체
+        let currentBrand = 'GS25'; // 현재 선택된 브랜드 (기본값: GS25)
+        let userLatitude = 37.566826; // 내 위도 (기본값: 서울시청)
+        let userLongitude = 126.9786567; // 내 경도 (기본값: 서울시청)
 
-        // 카카오맵 스크립트가 완전히 로드된 후 실행되도록 처리
+        // 카카오맵 스크립트가 완전히 로드된 후 실행
         kakao.maps.load(function() {
             initializeMap();
         });
 
         // 지도를 초기화하고 현재 위치를 잡는 함수
         function initializeMap() {
-            const mapContainer = document.getElementById('map'); // 지도를 표시할 HTML 엘리먼트
+            const mapContainer = document.getElementById('map');
             
-            // 기본 중심 좌표 (사용자가 위치 권한을 거부할 경우를 대비한 서울시청 좌표)
-            let defaultCenter = new kakao.maps.LatLng(37.566826, 126.9786567);
-            
+            let defaultCenter = new kakao.maps.LatLng(userLatitude, userLongitude);
             const mapOptions = {
-                center: defaultCenter, // 지도의 중심좌표
-                level: 5 // 지도 확대 레벨 (5레벨)
+                center: defaultCenter,
+                level: 5 // 요청하신 확대 레벨 5
             };
 
-            // 지도 객체 생성
             map = new kakao.maps.Map(mapContainer, mapOptions);
-            
-            // 장소 검색 객체 생성 (서비스 라이브러리 활용)
             placeSearch = new kakao.maps.services.Places();
-
-            // 클릭 시 띄울 공통 인포윈도우 객체 생성
             infoWindow = new kakao.maps.InfoWindow({ zIndex: 1 });
 
-            // HTML5의 Geolocation으로 현재 위치를 가져옵니다 (위치 권한 요청)
+            // HTML5 Geolocation으로 현재 위치 요청
             if (navigator.geolocation) {
                 navigator.geolocation.getCurrentPosition(function(position) {
-                    const lat = position.coords.latitude; // 위도
-                    const lon = position.coords.longitude; // 경도
+                    userLatitude = position.coords.latitude;
+                    userLongitude = position.coords.longitude;
+                    const currentPos = new kakao.maps.LatLng(userLatitude, userLongitude);
                     
-                    const currentPos = new kakao.maps.LatLng(lat, lon);
-                    
-                    // 지도의 중심을 현재 위치로 이동시킵니다
                     map.setCenter(currentPos);
                     
-                    // 현재 위치에 표시할 마커 생성
-                    const currentMarker = new kakao.maps.Marker({
+                    // 내 현재 위치 마커 생성 (다른 마커와 구분하기 위해 카카오 기본 빨간색 마커 사용)
+                    // 편의점 마커는 나중에 별도의 커스텀 이미지나 기본 핀으로 생성하여 구별합니다.
+                    currentPositionMarker = new kakao.maps.Marker({
                         position: currentPos,
                         map: map
                     });
-                    
-                    // 마커 위에 표시할 인포윈도우 생성
+
+                    // 현재 위치 마커 위에 인포윈도우 띄우기
                     const currentInfoWindow = new kakao.maps.InfoWindow({
-                        content: '<div style="padding:5px;font-size:12px;text-align:center;width:150px;">현재 나의 위치</div>',
-                        removable: true
+                        content: '<div style="padding:5px;font-size:12px;text-align:center;width:150px;">내 현재 위치</div>'
                     });
-                    currentInfoWindow.open(map, currentMarker);
+                    currentInfoWindow.open(map, currentPositionMarker);
+
+                    // 위치 정보를 받아온 후, 해당 위치 기준으로 현재 선택된 브랜드 편의점 검색 실행
+                    searchStore();
 
                 }, function(error) {
                     console.error("위치 정보를 가져오는데 실패했습니다.", error);
-                    alert("위치 권한을 거부하셨거나 지원하지 않는 브라우저입니다. 기본 위치로 지도를 표시합니다.");
+                    alert("위치 권한을 거부하셨거나 지원하지 않아 기본 위치 주변을 검색합니다.");
+                    searchStore(); // 위치 실패해도 기본 좌표 기준으로 검색
                 });
             } else {
                 alert("이 브라우저에서는 위치 정보를 사용할 수 없습니다.");
+                searchStore();
             }
         }
 
-        // 키워드 장소 검색을 요청하는 함수
-        function searchPlaces() {
-            const keyword = document.getElementById('keyword').value;
+        // 탭 전환 함수
+        function switchBrand(brandName) {
+            if (currentBrand === brandName) return; // 이미 선택된 탭이면 무시
 
-            if (!keyword.trim()) {
-                alert('키워드를 입력해주세요!');
-                return false;
+            currentBrand = brandName;
+
+            // UI 활성화 상태 변경
+            const tabGS25 = document.getElementById('tabGS25');
+            const tabCU = document.getElementById('tabCU');
+
+            if (brandName === 'GS25') {
+                tabGS25.classList.add('active');
+                tabCU.classList.remove('active');
+            } else {
+                tabCU.classList.add('active');
+                tabGS25.classList.remove('active');
             }
 
-            // 카카오 장소 검색 객체를 통해 키워드 검색 요청
-            placeSearch.keywordSearch(keyword, placesSearchCB);
+            // 기존 마커를 전부 지우고 새로운 브랜드 편의점 검색
+            searchStore();
         }
 
-        // 장소검색이 완료됐을 때 호출되는 콜백 함수
-        function placesSearchCB(data, status, pagination) {
-            if (status === kakao.maps.services.Status.OK) {
-                // 정상적으로 검색이 완료됐으면 검색 목록과 마커를 표출합니다
-                displayPlaces(data);
-            } else if (status === kakao.maps.services.Status.ZERO_RESULT) {
-                alert('검색 결과가 존재하지 않습니다.');
-                return;
-            } else if (status === kakao.maps.services.Status.ERROR) {
-                alert('검색 결과 중 오류가 발생했습니다.');
-                return;
-            }
-        }
-
-        // 검색 결과 목록과 마커를 표출하는 함수
-        function displayPlaces(places) {
-            const listEl = document.getElementById('placesList');
-            const bounds = new kakao.maps.LatLngBounds(); // 지도를 재조정할 범위 객체
+        // 편의점 카테고리(CS2)와 브랜드를 조합해 주변 편의점을 검색하는 함수
+        function searchStore() {
+            // 내 현재 위치 혹은 설정된 중심점을 기준으로 검색 진행
+            const centerPos = new kakao.maps.LatLng(userLatitude, userLongitude);
             
-            // 기존에 표시되어 있던 마커 제거 및 검색 결과 목록 초기화
-            removeMarkers();
+            // 카테고리 검색 옵션 설정 (내 위치 기준 반경 2km 이내)
+            const searchOptions = {
+                location: centerPos,
+                radius: 2000,
+                sort: kakao.maps.services.SortBy.ACCURACY // 정확도 순 정렬
+            };
+
+            // 카테고리 코드 'CS2'(편의점)와 브랜드 이름(GS25 혹은 CU)으로 카카오 API 검색 호출
+            placeSearch.categorySearch('CS2', storeSearchCB, searchOptions);
+        }
+
+        // 카테고리 검색 완료 시 호출되는 콜백 함수
+        function storeSearchCB(data, status, pagination) {
+            if (status === kakao.maps.services.Status.OK) {
+                // 가져온 전체 편의점 데이터 중, 현재 선택된 브랜드(GS25 또는 CU)가 포함된 지점만 필터링
+                const filteredPlaces = data.filter(place => place.place_name.includes(currentBrand));
+                
+                if (filteredPlaces.length === 0) {
+                    clearListAndMarkers();
+                    document.getElementById('placesList').innerHTML = `<div style="padding:20px; text-align:center; color:#999;">주변 2km 이내에 ${currentBrand} 매장이 없습니다.</div>`;
+                    return;
+                }
+
+                // 필터링된 매장들을 화면에 표시
+                displayStores(filteredPlaces);
+            } else if (status === kakao.maps.services.Status.ZERO_RESULT) {
+                clearListAndMarkers();
+                document.getElementById('placesList').innerHTML = `<div style="padding:20px; text-align:center; color:#999;">주변에 편의점 결과가 없습니다.</div>`;
+            } else if (status === kakao.maps.services.Status.ERROR) {
+                alert('검색 중 오류가 발생했습니다.');
+            }
+        }
+
+        // 필터링된 편의점 결과를 지도와 리스트에 뿌려주는 함수
+        function displayStores(stores) {
+            const listEl = document.getElementById('placesList');
+            
+            // 기존 마커 및 리스트 초기화 (내 위치 마커는 유지)
+            removeStoreMarkers();
             listEl.innerHTML = '';
 
-            for (let i = 0; i < places.length; i++) {
-                const placePosition = new kakao.maps.LatLng(places[i].y, places[i].x);
+            for (let i = 0; i < stores.length; i++) {
+                const storePosition = new kakao.maps.LatLng(stores[i].y, stores[i].x);
                 
-                // 마커를 생성하고 지도에 표시합니다
-                const marker = addMarker(placePosition);
+                // 편의점용 마커 생성 (브랜드별로 다른 마커 이미지를 주어 구별)
+                const marker = addStoreMarker(storePosition, currentBrand);
                 
-                // 검색된 장소 위치를 기준으로 지도 범위를 재설정하기 위해 Bounds에 좌표 추가
-                bounds.extend(placePosition);
-
-                // 왼쪽 사이드바에 추가할 결과 아이템 HTML 동적 생성
+                // 왼쪽 사이드바 리스트 아이템 HTML 동적 생성
                 const itemEl = document.createElement('div');
                 itemEl.className = 'result-item';
                 itemEl.innerHTML = `
-                    <strong>${places[i].place_name}</strong><br>
-                    <small style="color:#666;">${places[i].road_address_name ? places[i].road_address_name : places[i].address_name}</small>
+                    <strong>${stores[i].place_name}</strong><br>
+                    <small style="color:#666;">${stores[i].road_address_name ? stores[i].road_address_name : stores[i].address_name}</small><br>
+                    <small style="color:#007bff; font-size:11px;">전화번호: ${stores[i].phone ? stores[i].phone : '정보 없음'}</small>
                 `;
 
-                // 마커와 검색 결과 항목에 이벤트를 등록합니다
-                // 1. 마커를 클릭했을 때 인포윈도우 표시
+                // 마커 클릭 시 정보창 표시
                 kakao.maps.event.addListener(marker, 'click', function() {
-                    displayInfoWindow(marker, places[i].place_name);
+                    displayInfoWindow(marker, stores[i].place_name);
                 });
 
-                // 2. 왼쪽 리스트 아이템을 클릭하면 해당 위치로 지도 이동 및 인포윈도우 표시
+                // 리스트 아이템 클릭 시 지도 이동 및 정보창 표시
                 itemEl.onclick = function() {
-                    map.setLevel(4); // 리스트 클릭 시 조금 더 확대해서 보여줌
-                    map.panTo(placePosition);
-                    displayInfoWindow(marker, places[i].place_name);
+                    map.setLevel(3); // 편의점을 확실히 볼 수 있게 레벨 3으로 확대
+                    map.panTo(storePosition);
+                    displayInfoWindow(marker, stores[i].place_name);
                 };
 
                 listEl.appendChild(itemEl);
             }
-
-            // 검색된 장소들이 모두 보이도록 지도 중심과 확대 레벨을 자동으로 조절합니다
-            map.setBounds(bounds);
         }
 
-        // 마커를 생성하고 지도 위에 표시하는 함수
-        function addMarker(position) {
+        // 편의점 전용 마커를 지도 위에 추가하는 함수 (브랜드별 다채로운 마커 디자인 설정 가능)
+        function addStoreMarker(position, brand) {
+            let markerImageUrl = '';
+            
+            // GS25와 CU를 구별하기 위해 카카오맵에서 기본 제공하는 다른 색상의 마커 이미지 주소 활용
+            // (실제 프로젝트 진행 시 고유의 png 아이콘 파일 주소로 대체하면 더 완벽해집니다!)
+            if (brand === 'GS25') {
+                // 파란색 계열 마커 이미지
+                markerImageUrl = 'https://t1.daumcdn.net/localimg/localimages/07/mapapidoc/marker_blue.png'; 
+            } else {
+                // 기본 마커와 구별되는 다른 형태/색상 이미지나 외부 아이콘 대체 가능 (여기서는 예시로 다른 카카오 공식 마커 사용)
+                markerImageUrl = 'https://t1.daumcdn.net/localimg/localimages/07/2012/img/marker_p.png'; 
+            }
+
+            const markerImageSize = new kakao.maps.Size(31, 35); // 마커 이미지의 크기
+            const markerImage = new kakao.maps.MarkerImage(markerImageUrl, markerImageSize);
+
             const marker = new kakao.maps.Marker({
                 position: position,
+                image: markerImage, // 커스텀 마커 이미지 적용
                 map: map
             });
-            markers.push(marker); // 추후 삭제를 위해 배열에 저장
+
+            markers.push(marker); // 삭제 관리를 위해 배열에 추가
             return marker;
         }
 
-        // 지도 위에 표시되고 있는 마커를 모두 제거하는 함수
-        function removeMarkers() {
+        // 편의점 마커들만 지도에서 지우는 함수 (내 위치 마커는 지워지지 않음)
+        function removeStoreMarkers() {
             for (let i = 0; i < markers.length; i++) {
                 markers[i].setMap(null);
             }
             markers = [];
-            infoWindow.close(); // 인포윈도우도 닫기
+            infoWindow.close();
         }
 
-        // 인포윈도우를 열어 장소명을 표시하는 함수
+        // 검색 결과가 없을 때 리스트와 마커를 전부 깨끗이 비워주는 함수
+        function clearListAndMarkers() {
+            removeStoreMarkers();
+            document.getElementById('placesList').innerHTML = '';
+        }
+
+        // 인포윈도우를 열어 편의점 지점명을 표시하는 함수
         function displayInfoWindow(marker, title) {
-            const content = `<div style="padding:5px;max-width:200px;font-size:12px;white-space:normal;word-break:break-all;">${title}</div>`;
+            const content = `<div style="padding:8px;max-width:220px;font-size:12px;white-space:normal;word-break:break-all;"><b>${title}</b></div>`;
             infoWindow.setContent(content);
             infoWindow.open(map, marker);
         }
